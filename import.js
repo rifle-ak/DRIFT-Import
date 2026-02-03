@@ -201,11 +201,24 @@ async function loadLocalAttachment(attachmentsDir, attachment) {
 
   // Try to find file with hash suffix (e.g., firetur-8A417.png)
   // Discord Chat Exporter HTML exports add hash suffixes to avoid collisions
+  // It may also truncate long filenames, so we try multiple prefix lengths
   try {
     const files = await readdir(attachmentsDir);
-    // Look for files matching: baseName-HASH.ext (case insensitive)
-    const pattern = new RegExp(`^${escapeRegex(baseName)}-[A-Fa-f0-9]+${escapeRegex(ext)}$`, 'i');
-    const match = files.find(f => pattern.test(f));
+
+    // First try exact basename match with hash
+    const exactPattern = new RegExp(`^${escapeRegex(baseName)}-[A-Fa-f0-9]+${escapeRegex(ext)}$`, 'i');
+    let match = files.find(f => exactPattern.test(f));
+
+    if (!match) {
+      // Try partial matches for truncated filenames (use first 20+ chars of basename)
+      // Discord Chat Exporter sometimes truncates long filenames before adding hash
+      const minPrefixLength = Math.min(20, baseName.length);
+      for (let prefixLen = baseName.length; prefixLen >= minPrefixLength && !match; prefixLen--) {
+        const prefix = baseName.substring(0, prefixLen);
+        const partialPattern = new RegExp(`^${escapeRegex(prefix)}[^/]*-[A-Fa-f0-9]+${escapeRegex(ext)}$`, 'i');
+        match = files.find(f => partialPattern.test(f));
+      }
+    }
 
     if (match) {
       const filePath = join(attachmentsDir, match);
