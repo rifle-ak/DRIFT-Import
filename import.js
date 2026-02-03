@@ -8,7 +8,7 @@
  */
 
 import { Client, GatewayIntentBits, ChannelType, AttachmentBuilder } from 'discord.js';
-import { readFile, stat, access } from 'fs/promises';
+import { readFile, stat, access, readdir } from 'fs/promises';
 import { dirname, join, basename } from 'path';
 import 'dotenv/config';
 
@@ -135,10 +135,40 @@ async function loadExportFile(filePath) {
 
 /**
  * Get the attachments directory path for an export file
+ * Tries multiple naming conventions used by Discord Chat Exporter
  */
-function getAttachmentsDir(exportFilePath) {
+async function getAttachmentsDir(exportFilePath, customDir = null) {
+  // If custom directory specified, use it
+  if (customDir) {
+    try {
+      await access(customDir);
+      return customDir;
+    } catch {
+      console.log(`   ⚠️  Custom attachments dir not found: ${customDir}`);
+    }
+  }
+
   const dir = dirname(exportFilePath);
   const baseName = basename(exportFilePath, '.json');
+
+  // Try different naming conventions used by Discord Chat Exporter
+  const possibleDirs = [
+    join(dir, `${baseName}_files`),           // JSON export: channel_files/
+    join(dir, `${baseName}.html_Files`),      // HTML export: channel.html_Files/
+    join(dir, `${baseName}_Files`),           // Alternative casing
+    join(dir, `${baseName}.json_Files`),      // Sometimes includes extension
+  ];
+
+  for (const possibleDir of possibleDirs) {
+    try {
+      await access(possibleDir);
+      return possibleDir;
+    } catch {
+      // Try next
+    }
+  }
+
+  // Return default even if it doesn't exist (will just skip attachments)
   return join(dir, `${baseName}_files`);
 }
 
@@ -282,7 +312,7 @@ async function sendWebhookMessage(webhook, options, retries = 3) {
 /**
  * Main import function
  */
-async function importToForum(exportFilePath, forumChannelId) {
+async function importToForum(exportFilePath, forumChannelId, customAttachmentsDir = null) {
   console.log('🚀 DRIFT-Import Starting...\n');
 
   // Validate token
@@ -293,13 +323,14 @@ async function importToForum(exportFilePath, forumChannelId) {
   // Load export data
   console.log(`📂 Loading export file: ${exportFilePath}`);
   const exportData = await loadExportFile(exportFilePath);
-  const attachmentsDir = getAttachmentsDir(exportFilePath);
+  const attachmentsDir = await getAttachmentsDir(exportFilePath, customAttachmentsDir);
 
   console.log(`   Channel: #${exportData.channel.name}`);
   console.log(`   Messages: ${exportData.messages.length}`);
   if (exportData.guild) {
     console.log(`   Guild: ${exportData.guild.name}`);
   }
+  console.log(`   Attachments: ${attachmentsDir}`);
   console.log('');
 
   // Initialize Discord client
@@ -454,6 +485,28 @@ async function loadConfig() {
 }
 
 /**
+ * Check if path is a directory
+ */
+async function isDirectory(path) {
+  try {
+    const stats = await stat(path);
+    return stats.isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Get all JSON files in a directory
+ */
+async function getJsonFiles(dirPath) {
+  const files = await readdir(dirPath);
+  return files
+    .filter(f => f.endsWith('.json'))
+    .map(f => join(dirPath, f));
+}
+
+/**
  * CLI Entry Point
  */
 async function main() {
@@ -466,6 +519,7 @@ DRIFT-Import - Import Discord Chat Exporter JSON files into forum posts
 
 Usage:
   node import.js <export.json> <forum-channel-id>
+  node import.js <export-folder> <forum-channel-id>
   node import.js --config
 
 Options:
@@ -474,27 +528,34 @@ Options:
 
 Arguments:
   export.json       Path to Discord Chat Exporter JSON file
+  export-folder     Path to folder containing JSON files (processes all)
   forum-channel-id  ID of the destination forum channel
 
 Environment Variables:
   DISCORD_TOKEN     Discord bot token (required)
   RATE_LIMIT_DELAY  Delay between messages in ms (default: 1500)
 
+Config file options (config.json):
+  exportFile        Path to JSON file or folder
+  forumChannelId    Target forum channel ID
+  attachmentsDir    Custom path to attachments folder (optional)
+
 Examples:
   node import.js ./exports/general.json 1234567890123456789
+  node import.js ./exports/ 1234567890123456789
   node import.js --config
 
 Export folder structure:
   exports/
   ├── channel.json
-  └── channel_files/
+  └── channel.html_Files/    (or channel_files/)
       ├── image1.png
       └── document.pdf
 `);
     process.exit(0);
   }
 
-  let exportFilePath, forumChannelId;
+  let exportPath, forumChannelId, attachmentsDir;
 
   // Config file mode
   if (args.includes('--config') || args.length === 0) {
@@ -510,22 +571,59 @@ Export folder structure:
         process.exit(1);
       }
 
-      exportFilePath = config.exportFile;
+      exportPath = config.exportFile;
       forumChannelId = config.forumChannelId;
+      attachmentsDir = config.attachmentsDir || null;
     } catch (error) {
       console.error(`❌ ${error.message}`);
       process.exit(1);
     }
   } else if (args.length >= 2) {
     // CLI arguments mode
-    [exportFilePath, forumChannelId] = args;
+    [exportPath, forumChannelId] = args;
+    attachmentsDir = args[2] || null; // Optional third argument
   } else {
     console.error('❌ Not enough arguments. Use --help for usage information.');
     process.exit(1);
   }
 
   try {
-    await importToForum(exportFilePath, forumChannelId);
+    // Check if exportPath is a directory (folder mode)
+    if (await isDirectory(exportPath)) {
+      const jsonFiles = await getJsonFiles(exportPath);
+
+      if (jsonFiles.length === 0) {
+        console.error('❌ No JSON files found in the specified folder');
+        process.exit(1);
+      }
+
+      console.log(`📁 Folder mode: Found ${jsonFiles.length} JSON file(s)\n`);
+
+      for (let i = 0; i < jsonFiles.length; i++) {
+        console.log(`\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+        console.log(`📄 Processing file ${i + 1}/${jsonFiles.length}`);
+        console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`);
+
+        try {
+          await importToForum(jsonFiles[i], forumChannelId, attachmentsDir);
+        } catch (error) {
+          console.error(`\n❌ Error processing ${jsonFiles[i]}: ${error.message}`);
+          console.log('   Continuing with next file...\n');
+        }
+
+        // Delay between imports to avoid rate limits
+        if (i < jsonFiles.length - 1) {
+          console.log('\n⏳ Waiting 5 seconds before next import...\n');
+          await sleep(5000);
+        }
+      }
+
+      console.log('\n✅ All files processed!');
+    } else {
+      // Single file mode
+      await importToForum(exportPath, forumChannelId, attachmentsDir);
+    }
+
     process.exit(0);
   } catch (error) {
     console.error(`\n❌ Error: ${error.message}`);
