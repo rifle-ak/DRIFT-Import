@@ -279,11 +279,16 @@ function formatFileSize(bytes) {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+const MAX_MESSAGE_LENGTH = 2000;
+
 /**
  * Build message content with timestamp and attachment links
+ * Handles Discord's 2000 character limit
  */
 function buildMessageContent(message, oversizedLinks) {
   let content = message.content || '';
+  const timestamp = formatDiscordTimestamp(message.timestamp);
+  const timestampSuffix = `\n-# ${timestamp}`;
 
   // Add attachment links if any
   if (oversizedLinks.length > 0) {
@@ -292,11 +297,26 @@ function buildMessageContent(message, oversizedLinks) {
   }
 
   // Add timestamp suffix
-  const timestamp = formatDiscordTimestamp(message.timestamp);
-  if (content) {
-    content += `\n-# ${timestamp}`;
-  } else {
-    content = `-# ${timestamp}`;
+  content += timestampSuffix;
+
+  // If content exceeds limit, truncate it
+  if (content.length > MAX_MESSAGE_LENGTH) {
+    // Reserve space for timestamp and ellipsis
+    const reservedLength = timestampSuffix.length + 20; // "...[truncated]" + buffer
+    const maxContentLength = MAX_MESSAGE_LENGTH - reservedLength;
+
+    // Find a good break point (newline or space)
+    let truncateAt = maxContentLength;
+    const lastNewline = content.lastIndexOf('\n', maxContentLength);
+    const lastSpace = content.lastIndexOf(' ', maxContentLength);
+
+    if (lastNewline > maxContentLength * 0.7) {
+      truncateAt = lastNewline;
+    } else if (lastSpace > maxContentLength * 0.7) {
+      truncateAt = lastSpace;
+    }
+
+    content = content.substring(0, truncateAt) + '\n...[truncated]' + timestampSuffix;
   }
 
   return content;
