@@ -174,13 +174,19 @@ async function getAttachmentsDir(exportFilePath, customDir = null) {
 
 /**
  * Try to load a local attachment file
+ * Handles various naming conventions including hash suffixes from HTML exports
  */
 async function loadLocalAttachment(attachmentsDir, attachment) {
-  // Try different possible file paths
+  const fileName = attachment.fileName;
+  const extIndex = fileName.lastIndexOf('.');
+  const baseName = extIndex > 0 ? fileName.substring(0, extIndex) : fileName;
+  const ext = extIndex > 0 ? fileName.substring(extIndex) : '';
+
+  // Try exact matches first
   const possiblePaths = [
-    join(attachmentsDir, attachment.fileName),
-    join(attachmentsDir, `${attachment.id}_${attachment.fileName}`),
-    join(attachmentsDir, attachment.id.toString(), attachment.fileName)
+    join(attachmentsDir, fileName),
+    join(attachmentsDir, `${attachment.id}_${fileName}`),
+    join(attachmentsDir, attachment.id.toString(), fileName)
   ];
 
   for (const filePath of possiblePaths) {
@@ -193,7 +199,31 @@ async function loadLocalAttachment(attachmentsDir, attachment) {
     }
   }
 
+  // Try to find file with hash suffix (e.g., firetur-8A417.png)
+  // Discord Chat Exporter HTML exports add hash suffixes to avoid collisions
+  try {
+    const files = await readdir(attachmentsDir);
+    // Look for files matching: baseName-HASH.ext (case insensitive)
+    const pattern = new RegExp(`^${escapeRegex(baseName)}-[A-Fa-f0-9]+${escapeRegex(ext)}$`, 'i');
+    const match = files.find(f => pattern.test(f));
+
+    if (match) {
+      const filePath = join(attachmentsDir, match);
+      const stats = await stat(filePath);
+      return { path: filePath, size: stats.size };
+    }
+  } catch {
+    // Directory read failed, skip hash matching
+  }
+
   return null;
+}
+
+/**
+ * Escape special regex characters in a string
+ */
+function escapeRegex(string) {
+  return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 /**
