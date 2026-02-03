@@ -438,17 +438,39 @@ async function importToForum(exportFilePath, forumChannelId) {
 }
 
 /**
+ * Load config from config.json
+ */
+async function loadConfig() {
+  try {
+    const configPath = join(dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Z]:)/, '$1')), 'config.json');
+    const content = await readFile(configPath, 'utf-8');
+    return JSON.parse(content);
+  } catch (error) {
+    if (error.code === 'ENOENT') {
+      throw new Error('config.json not found. Please create it from the template.');
+    }
+    throw new Error(`Failed to load config.json: ${error.message}`);
+  }
+}
+
+/**
  * CLI Entry Point
  */
 async function main() {
   const args = process.argv.slice(2);
 
-  if (args.length < 2 || args.includes('--help') || args.includes('-h')) {
+  // Help flag
+  if (args.includes('--help') || args.includes('-h')) {
     console.log(`
 DRIFT-Import - Import Discord Chat Exporter JSON files into forum posts
 
 Usage:
   node import.js <export.json> <forum-channel-id>
+  node import.js --config
+
+Options:
+  --config          Use config.json file instead of arguments
+  --help, -h        Show this help message
 
 Arguments:
   export.json       Path to Discord Chat Exporter JSON file
@@ -458,8 +480,9 @@ Environment Variables:
   DISCORD_TOKEN     Discord bot token (required)
   RATE_LIMIT_DELAY  Delay between messages in ms (default: 1500)
 
-Example:
+Examples:
   node import.js ./exports/general.json 1234567890123456789
+  node import.js --config
 
 Export folder structure:
   exports/
@@ -468,10 +491,38 @@ Export folder structure:
       ├── image1.png
       └── document.pdf
 `);
-    process.exit(args.includes('--help') || args.includes('-h') ? 0 : 1);
+    process.exit(0);
   }
 
-  const [exportFilePath, forumChannelId] = args;
+  let exportFilePath, forumChannelId;
+
+  // Config file mode
+  if (args.includes('--config') || args.length === 0) {
+    try {
+      const config = await loadConfig();
+
+      if (!config.exportFile || config.exportFile === './exports/channel.json') {
+        console.error('❌ Please edit config.json and set the exportFile path');
+        process.exit(1);
+      }
+      if (!config.forumChannelId || config.forumChannelId === 'PASTE_FORUM_CHANNEL_ID_HERE') {
+        console.error('❌ Please edit config.json and set the forumChannelId');
+        process.exit(1);
+      }
+
+      exportFilePath = config.exportFile;
+      forumChannelId = config.forumChannelId;
+    } catch (error) {
+      console.error(`❌ ${error.message}`);
+      process.exit(1);
+    }
+  } else if (args.length >= 2) {
+    // CLI arguments mode
+    [exportFilePath, forumChannelId] = args;
+  } else {
+    console.error('❌ Not enough arguments. Use --help for usage information.');
+    process.exit(1);
+  }
 
   try {
     await importToForum(exportFilePath, forumChannelId);

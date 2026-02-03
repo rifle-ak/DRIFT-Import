@@ -23,3 +23,7 @@ Thumbs.db
 # Export files (user data)
 exports/
 *_files/
+
+# User config (contains channel IDs)
+# Uncomment if you want to track your config
+# config.json
