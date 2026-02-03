@@ -1,4 +1,5 @@
 {
   "exportFile": "./exports/channel.json",
-  "forumChannelId": "PASTE_FORUM_CHANNEL_ID_HERE"
+  "forumChannelId": "PASTE_FORUM_CHANNEL_ID_HERE",
+  "attachmentsDir": null
 }
